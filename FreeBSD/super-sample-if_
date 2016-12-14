@@ -1,0 +1,34 @@
+#!/usr/bin/env python2.7
+# Mark Saad
+# nonesuch@longcount.org
+# 14Dec16
+#
+# Some minor work to get a supersampling if_ like plugin for freebsd
+# Not all there yet, the idea is to have data stored in pickledb 
+# or just run this over and over and store this to a file
+
+
+import os
+import re
+import time
+import os
+import pickledb
+import subprocess as sp
+
+FNULL = open(os.devnull, 'w')
+
+progname = os.path.basename(__file__)
+nic = progname.split('_')
+proc = sp.Popen('/usr/bin/netstat  -n -I '+nic[1], shell=True, stdout=sp.PIPE, stderr=FNULL)
+output = proc.stdout.read()
+
+db = pickledb.load('/tmp/'+nic[1]+'-stats.db', False)
+linesplit  = re.split('\n', output)
+valsplit = re.split('Link[0-9].+', linesplit[1])
+data = valsplit[0].split( )
+
+print "{} {}{}{}".format('rbytes.value',str(time.time()),':',data[4])
+print "{} {}{}{}".format('obytes.value',str(time.time()),':',data[7])
+db.set('rbytes-'+str(time.time()),data[4])
+db.set('obytes-'+str(time.time()),data[7])
+db.dump()
