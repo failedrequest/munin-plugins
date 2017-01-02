@@ -47,7 +47,8 @@ else:
    linesplit  = re.split('\n', output)
    valsplit = re.split('Link[0-9].+', linesplit[1])
    data = valsplit[0].split( )
-   nsq = {str(time.time()): {'in':data[4],'out':data[7]}}
+   nsq = {int(time.time()): {'in':data[4],'out':data[7]}}
+
 
    for key,values in nsq.items():
       for k,v in values.items():
