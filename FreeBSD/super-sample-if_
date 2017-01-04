@@ -3,7 +3,7 @@ import os
 import sys
 import re
 import time
-#import pickledb
+import cPickle as pickle
 import subprocess as sp
 
 try:
@@ -12,14 +12,52 @@ except:
   input = 0
 
 FNULL = open(os.devnull, 'w')
+nsq = {}
 
 progname = os.path.basename(__file__)
 INTERFACE = progname.split('_')
+db = '/tmp/'+INTERFACE[1]+'-stats.db'
+
+def touch(path):
+    with open(path, 'a'):
+        os.utime(path, None)
+
+def getpoint():
+     proc = sp.Popen('/usr/bin/netstat -n -I '+INTERFACE[1], shell=True, stdout=sp.PIPE, stderr=FNULL)
+     output = proc.stdout.read() 
+     linesplit  = re.split('\n', output)
+     valsplit = re.split('Link[0-9].+', linesplit[1])
+     data = valsplit[0].split( )
+     nsq = {int(time.time()): [data[4],data[7]]}
+     touch(db)
+     nsqdump = open(db, 'rb+', os.O_RDWR|os.O_CREAT)
+     while 1:
+       try:
+         nsq.update(pickle.load(nsqdump))
+       except EOFError:
+         nsqdump.close()
+         break
+     nsqdump = open(db, 'wb', os.O_RDWR|os.O_CREAT)
+     pickle.dump(nsq, nsqdump)
+     nsqdump.close()
+
+def printdata():
+    nsqdump = open(db, 'rb', os.O_RDWR|os.O_CREAT)
+    while 1:
+      try:
+         nsq.update(pickle.load(nsqdump))
+      except EOFError:
+         nsqdump.close()
+         break
+    for entrytime,datapoint in nsq.iteritems():
+        print '{0} {1}{2}{3}'.format("rbytes.value",entrytime,':',datapoint[0]) 
+        print '{0} {1}{2}{3}'.format("obytes.value",entrytime,':',datapoint[1]) 
 
 
 if input == "autoconf":
    print "yes"
    sys.exit(0)
+
 elif input == "config":
    print 'graph_title '+INTERFACE[1]+' traffic'
    print 'graph_order rbytes obytes'
@@ -40,20 +78,19 @@ elif input == "config":
    print 'obytes.min 0'
    print 'obytes.info Traffic sent (+) and received (-) on the '+INTERFACE[1]+' network interface. '
    sys.exit(0)
+
 else:
-   proc = sp.Popen('/usr/bin/netstat  -n -I '+INTERFACE[1], shell=True, stdout=sp.PIPE, stderr=FNULL)
-   output = proc.stdout.read()
-   #db = pickledb.load('/tmp/'+INTERFACE[1]+'-stats.db', False)
-   linesplit  = re.split('\n', output)
-   valsplit = re.split('Link[0-9].+', linesplit[1])
-   data = valsplit[0].split( )
-   nsq = {int(time.time()): {'in':data[4],'out':data[7]}}
+    while 1:
+      if input == "spawn":
+         getpoint()
+         time.sleep(30 )
+      elif input == "fetch":
+         printdata()
+         os.remove(db)
+         touch(db)
+         break
+      else:
+         printdata()
+         break
+   
 
-
-   for key,values in nsq.items():
-      for k,v in values.items():
-          if k == 'in':
-             direction = 'rbytes'
-          else:
-             direction = 'obytes'
-          print '{0}{1} {2}{3}{4}'.format(direction,'.value',key,':',v)
