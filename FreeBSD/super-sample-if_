@@ -56,7 +56,6 @@ def getpoint():
      valsplit = re.split('Link[0-9].+', linesplit[1])
      data = valsplit[0].split( )
      nsq = {int(time.time()): [data[7],data[10]]}
-     touch(db)
      nsqdump = open(db, 'rb+', os.O_RDWR|os.O_CREAT)
      while 1:
        try:
