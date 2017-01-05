@@ -1,4 +1,12 @@
 #!/usr/bin/env python2.7
+#
+# Mark Saad
+# 5Jan17
+# nonesuch@longcount.org
+#
+# A Supersampling if_ plugin for FreeBSD 
+# 
+
 import os
 import sys
 import re
@@ -23,12 +31,12 @@ def touch(path):
         os.utime(path, None)
 
 def getpoint():
-     proc = sp.Popen('/usr/bin/netstat -n -I '+INTERFACE[1], shell=True, stdout=sp.PIPE, stderr=FNULL)
+     proc = sp.Popen('/usr/bin/netstat -ibn -I '+INTERFACE[1], shell=True, stdout=sp.PIPE, stderr=FNULL)
      output = proc.stdout.read() 
      linesplit  = re.split('\n', output)
      valsplit = re.split('Link[0-9].+', linesplit[1])
      data = valsplit[0].split( )
-     nsq = {int(time.time()): [data[4],data[7]]}
+     nsq = {int(time.time()): [data[7],data[10]]}
      touch(db)
      nsqdump = open(db, 'rb+', os.O_RDWR|os.O_CREAT)
      while 1:
@@ -59,7 +67,7 @@ if input == "autoconf":
    sys.exit(0)
 
 elif input == "config":
-   print 'graph_title '+INTERFACE[1]+' traffic'
+   print 'graph_title 30Sec SuperSample on '+INTERFACE[1]+' traffic'
    print 'graph_order rbytes obytes'
    print 'graph_args --base 1000'
    print 'graph_vlabel bits per ${graph_period} in (-) / out (+)'
@@ -82,12 +90,12 @@ elif input == "config":
 else:
     while 1:
       if input == "spawn":
+         nsqdump = open(db, 'wb+', os.O_RDWR|os.O_CREAT).close()
          getpoint()
-         time.sleep(30 )
+         time.sleep(30)
       elif input == "fetch":
          printdata()
-         os.remove(db)
-         touch(db)
+         nsqdump = open(db, 'wb+', os.O_RDWR|os.O_CREAT).close()
          break
       else:
          printdata()
