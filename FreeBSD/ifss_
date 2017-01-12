@@ -1,7 +1,7 @@
 #!/usr/bin/env python2.7
 #
 # Mark Saad 
-# 5Jan17
+# 11Jan17
 # nonesuch@longcount.org
 #
 # A Supersampling if_ plugin for FreeBSD 
@@ -34,7 +34,7 @@ import os
 import sys
 import re
 import time
-import cPickle as pickle
+import csv
 import subprocess as sp
 
 try:
@@ -50,34 +50,27 @@ INTERFACE = progname.split('_')
 db = '/tmp/'+INTERFACE[1]+'-stats.db'
 
 def getpoint():
+     ts = int(time.time())
      proc = sp.Popen('/usr/bin/netstat -ibn -I '+INTERFACE[1], shell=True, stdout=sp.PIPE, stderr=FNULL)
      output = proc.stdout.read() 
      linesplit  = re.split('\n', output)
      valsplit = re.split('Link[0-9].+', linesplit[1])
      data = valsplit[0].split( )
-     nsq = {int(time.time()): [data[7],data[10]]}
-     nsqdump = open(db, 'rb+', os.O_RDWR|os.O_CREAT)
-     while 1:
-       try:
-         nsq.update(pickle.load(nsqdump))
-       except EOFError:
-         nsqdump.close()
-         break
-     nsqdump = open(db, 'wb', os.O_RDWR|os.O_CREAT)
-     pickle.dump(nsq, nsqdump)
-     nsqdump.close()
+     with open(db, 'a') as csvfile:
+         nsqwriter = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+         nsqwriter.writerow([ts,data[7],data[10]])
 
-def printdata():
-    nsqdump = open(db, 'rb', os.O_RDWR|os.O_CREAT)
-    while 1:
-      try:
-         nsq.update(pickle.load(nsqdump))
-      except EOFError:
-         nsqdump.close()
-         break
-    for entrytime,datapoint in nsq.iteritems():
-        print '{0} {1}{2}{3}'.format("rbytes.value",entrytime,':',datapoint[0]) 
-        print '{0} {1}{2}{3}'.format("obytes.value",entrytime,':',datapoint[1]) 
+def readdata():
+   try:
+      os.stat(db)
+      with open(db, 'rb') as f:
+          reader = csv.reader(f)
+          for row in reader:
+             print '{0} {1}{2}{3}'.format("rbytes.value",row[0],':',row[1])
+             print '{0} {1}{2}{3}'.format("obytes.value",row[0],':',row[2])
+      nsqdump = open(db, 'wb+', os.O_RDWR|os.O_CREAT).close()
+   except:
+      nsqdump = open(db, 'wb+', os.O_RDWR|os.O_CREAT).close()
 
 
 if input == "autoconf":
@@ -95,6 +88,7 @@ elif input == "config":
    print 'rbytes.type DERIVE'
    print 'rbytes.graph no'
    print 'update_rate 30'
+   print 'graph_data_size custom 1d, 30s for 1w, 1m for 1t, 5m for 1y'
    print 'rbytes.cdef rbytes,8,*'
    print 'rbytes.min 0'
    print 'obytes.label bps'
@@ -102,21 +96,18 @@ elif input == "config":
    print 'obytes.negative rbytes'
    print 'obytes.cdef obytes,8,*'
    print 'obytes.min 0'
-   print 'obytes.info Traffic sent (+) and received (-) on the '+INTERFACE[1]+' network interface. '
+   print 'obytes.draw AREA'
+   print 'obytes.colour COLOUR6'
    sys.exit(0)
 
 else:
     while 1:
       if input == "acquire":
-         nsqdump = open(db, 'wb+', os.O_RDWR|os.O_CREAT).close()
          getpoint()
          time.sleep(30)
-      elif input == "fetch":
-         printdata()
-         nsqdump = open(db, 'wb+', os.O_RDWR|os.O_CREAT).close()
-         break
       else:
-         print "Usage: munin-run super-sample-if_sfxge0 acquire &"
-         break
+        readdata()
+        sys.exit(0)
+         
    
 
