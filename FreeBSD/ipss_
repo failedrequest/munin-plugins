@@ -1,0 +1,114 @@
+#!/usr/bin/env python2.7
+#
+# Mark Saad 
+# 11Jan17
+# nonesuch@longcount.org
+#
+# A Supersampling ip_ plugin for FreeBSD 
+# Samples packets on an interface ever 30 seconds
+# 
+# Copyright (c) 2017, Mark Saad
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE PROJECT ``AS IS'' AND ANY EXPRESS OR
+# IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+# OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+# IN NO EVENT SHALL THE PROJECT BE LIABLE FOR ANY DIRECT, INDIRECT,
+# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+# NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+# THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+
+import os
+import sys
+import re
+import time
+import csv
+import subprocess as sp
+
+try:
+  input = sys.argv[1]
+except:
+  input = 0
+
+FNULL = open(os.devnull, 'w')
+nsq = {}
+
+progname = os.path.basename(__file__)
+INTERFACE = progname.split('_')
+db = '/tmp/'+INTERFACE[1]+'-pps-stats.db'
+
+def getpoint():
+     ts = int(time.time())
+     proc = sp.Popen('/usr/bin/netstat -ibn -I '+INTERFACE[1], shell=True, stdout=sp.PIPE, stderr=FNULL)
+     output = proc.stdout.read() 
+     linesplit  = re.split('\n', output)
+     valsplit = re.split('Link[0-9].+', linesplit[1])
+     data = valsplit[0].split( )
+     with open(db, 'a') as csvfile:
+         nsqwriter = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+         nsqwriter.writerow([ts,data[4],data[8]])
+
+def readdata():
+   try:
+      os.stat(db)
+      with open(db, 'rb') as f:
+          reader = csv.reader(f)
+          for row in reader:
+             print '{0} {1}{2}{3}'.format("rbytes.value",row[0],':',row[1])
+             print '{0} {1}{2}{3}'.format("obytes.value",row[0],':',row[2])
+      nsqdump = open(db, 'wb+', os.O_RDWR|os.O_CREAT).close()
+   except:
+      nsqdump = open(db, 'wb+', os.O_RDWR|os.O_CREAT).close()
+
+
+if input == "autoconf":
+   print "yes"
+   sys.exit(0)
+
+elif input == "config":
+   print 'graph_title 30Sec SuperSample on '+INTERFACE[1]+' packets'
+   print 'graph_order rbytes obytes'
+   print 'graph_args --base 1000'
+   print 'graph_vlabel packets per ${graph_period} in (-) / out (+)'
+   print 'graph_category network'
+   print 'graph_info This graph shows the pps of the '+ INTERFACE[1]+' network interface.'
+   print 'rbytes.label received'
+   print 'rbytes.type DERIVE'
+   print 'rbytes.graph no'
+   print 'update_rate 30'
+   print 'graph_data_size custom 1d, 30s for 1w, 1m for 1t, 5m for 1y'
+   print 'rbytes.cdef rbytes,8,*'
+   print 'rbytes.min 0'
+   print 'obytes.label pps'
+   print 'obytes.type DERIVE'
+   print 'obytes.negative rbytes'
+   print 'obytes.cdef obytes,8,*'
+   print 'obytes.min 0'
+   print 'obytes.draw AREA'
+   print 'obytes.colour COLOUR4'
+   sys.exit(0)
+
+else:
+    while 1:
+      if input == "acquire":
+         getpoint()
+         time.sleep(30)
+      else:
+        readdata()
+        sys.exit(0)
+         
+   
+
