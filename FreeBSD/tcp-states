@@ -54,4 +54,39 @@ if [ "$1" = "config" ]; then
         exit 0
 fi
 
-netstat -n -p tcp | awk '/^tcp/ { states[$6]++ } END { for (idx in states) print idx ".value " states[idx] }'
+netstat -an -p tcp -f inet | awk '$NF ~ /[A-Z]/ {print $NF}'|awk '
+  BEGIN{
+    estab = "0";
+    syn_sent = "0";
+    listen = "0";
+    time_wait = "0";
+    closing = "0";
+    closed = "0";
+    last_ack = "0";
+    fin_wait_1 = "0";
+    fin_wait_2 = "0";
+    close_wait = "0";
+  }
+  /ESTABLISH/           { estab=estab+1 }
+  /SYN_SENT/            { syn_sent=syn_sent+1 }
+  /LISTEN/              { listen=listen+1 }
+  /TIME_WAIT/           { time_wait=time_wait+1 }
+  /CLOSING/             { closing=closing+1 }
+  /CLOSED/              { closed=closed+1 }
+  /LAST_ACK/            { last_ack=last_ack+1 }
+  /FIN_WAIT_1/          { fin_wait_1=fin_wait_1+1 }
+  /FIN_WAIT_2/          { fin_wait_2=fin_wait_2+1 }
+  /CLOSE_WAIT/          { close_wait=close_wait+1 }
+END{
+   print "ESTABLISH.value " estab;
+   print "SYN_SENT.value " syn_sent;
+   print "LISTEN.value " listen;
+   print "TIME_WAIT.value " time_wait;
+   print "CLOSING.value " closing;
+   print "CLOSED.value " closed;
+   print "LAST_ACK.value " last_ack;
+   print "FIN_WAIT_1.value " fin_wait_1;
+   print "FIN_WAIT_2.value " fin_wait_2;
+   print "CLOSE_WAIT.value " close_wait;
+}
+'
