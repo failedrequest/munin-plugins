@@ -1,0 +1,26 @@
+#!/bin/sh
+# Mark Saad
+# Plugin to monitor ARP Table sizes
+# 15Jun2019
+# nonesuch@longcount.org
+# 
+
+INTERFACE=${0##*arp_}
+TOTAL="$(arp -na -i ${INTERFACE} |wc -l)"
+
+if [ "$1" = "autoconf" ]; then
+    echo yes
+    exit 0
+fi
+
+if [ "$1" = "config" ]; then
+
+    echo "graph_title ARP table size for ${INTERFACE}"
+    echo "graph_category network"
+    echo "graph_scale yes"
+    echo "total.label ARP Total"
+    echo "total.type GAUGE"
+  exit 0
+fi
+
+echo "total.value" $TOTAL
