@@ -6,8 +6,25 @@
 # nonesuch@longcount.org
 #
 # A Supersampling ip_ plugin for FreeBSD 
-# Samples packets on an interface ever 30 seconds
-# 
+#
+# Munin only polls every 5 minutes. This plugin samples the interface packet
+# counters every 30 seconds and hands munin all of the samples, with their
+# original timestamps, on each poll.
+#
+# Usage:
+#   ln -s /path/to/ipss_ /usr/local/etc/minimunin-plugins/ipss_em0
+#
+# The first poll starts a background collector for the interface by itself.
+# Nothing else needs to be started from rc.conf or rc.local. The collector
+# is single-instance (flock on a pid file), so running
+# "ipss_em0 acquire" by hand, or from an old rc script, is still safe; it
+# exits at once if a collector is already running.
+#
+# State files are kept in $MUNIN_PLUGSTATE, or /tmp if that is not set:
+#   ipss_<if>.pid    collector lock + pid
+#   ipss_<if>.spool  samples waiting for munin (ts,rx_packets,tx_packets)
+#   ipss_<if>.read   spool being handed to munin (internal)
+#
 # Copyright (c) 2017, Mark Saad
 # All rights reserved.
 #
@@ -32,82 +49,226 @@
 # THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
+import fcntl
+import json
 import os
-import sys
 import re
+import subprocess
+import sys
 import time
-import csv
-import subprocess as sp
 
-try:
-  input = sys.argv[1]
-except:
-  input = 0
-
-FNULL = open(os.devnull, 'w')
-nsq = {}
-
-progname = os.path.basename(__file__)
-INTERFACE = progname.split('_')
-db = '/tmp/'+INTERFACE[1]+'-pps-stats.db'
-
-def getpoint():
-     ts = int(time.time())
-     proc = sp.Popen('/usr/bin/netstat -ibn -I '+INTERFACE[1], shell=True, stdout=sp.PIPE, stderr=FNULL)
-     output = proc.stdout.read().decode('utf-8') 
-     linesplit  = re.split('\n', output)
-     valsplit = re.split('Link[0-9].+', linesplit[1])
-     data = valsplit[0].split( )
-     with open(db, 'a') as csvfile:
-         nsqwriter = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
-         nsqwriter.writerow([ts,data[4],data[8]])
-
-def readdata():
-   try:
-      os.stat(db)
-      with open(db) as f:
-          reader = csv.reader(f, delimiter=',', quotechar='|')
-          for row in reader:
-             print("{0} {1}{2}{3}".format("rbytes.value",row[0],":",row[1]))
-             print("{0} {1}{2}{3}".format("obytes.value",row[0],":",row[2]))
-      nsqdump = open(db, 'wb+', os.O_RDWR|os.O_CREAT).close()
-   except:
-      nsqdump = open(db, 'wb+', os.O_RDWR|os.O_CREAT).close()
+NETSTAT = '/usr/bin/netstat'
+SAMPLE_INTERVAL = 30          # seconds between samples
+MAX_SPOOL_BYTES = 64 * 1024   # ~13h of samples; older data is rotated out
+MAX_FAILURES = 20             # consecutive failed samples before giving up
+IFACE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.:-]*$')
 
 
-if input == "autoconf":
-   print("yes")
-   sys.exit(0)
+class SampleError(Exception):
+    """The interface counters could not be read."""
 
-elif input == "config":
-   print('graph_title 30Sec SuperSample on '+INTERFACE[1]+' packets')
-   print('graph_order rbytes obytes')
-   print('graph_args --base 1000')
-   print('graph_vlabel packets per ${graph_period} in (-) / out (+)')
-   print('graph_category network')
-   print('graph_info This graph shows the pps of the '+ INTERFACE[1]+' network interface.')
-   print('rbytes.label received')
-   print('rbytes.type DERIVE')
-   print('rbytes.graph no')
-   print('update_rate 30')
-   print('graph_data_size custom 1d, 30s for 1w, 1m for 1t, 5m for 1y')
-   print('rbytes.min 0')
-   print('obytes.label pps')
-   print('obytes.type DERIVE')
-   print('obytes.negative rbytes')
-   print('obytes.min 0')
-   print('obytes.draw AREA')
-   print('obytes.colour COLOUR4')
-   sys.exit(0)
 
-else:
-    while 1:
-      if input == "acquire":
-         getpoint()
-         time.sleep(30)
-      else:
-        readdata()
-        sys.exit(0)
-         
-   
+def interface_from_name(path):
+    """ipss_em0 -> em0. Returns None if the name is missing or unsafe."""
+    iface = os.path.basename(path).partition('_')[2]
+    return iface if IFACE_RE.match(iface) else None
 
+
+def state_paths(iface, state_dir=None):
+    """Return (spool, reading, pidfile) paths for an interface."""
+    state_dir = state_dir or os.environ.get('MUNIN_PLUGSTATE') or '/tmp'
+    base = os.path.join(state_dir, 'ipss_' + iface)
+    return base + '.spool', base + '.read', base + '.pid'
+
+
+def parse_counters(text):
+    """Pull (rx_packets, tx_packets) from `netstat --libxo json -ibn` output."""
+    try:
+        entries = json.loads(text)['statistics']['interface']
+        for entry in entries:
+            if entry.get('network', '').startswith('<Link'):
+                return int(entry['received-packets']), int(entry['sent-packets'])
+    except (ValueError, KeyError, TypeError) as err:
+        raise SampleError('unparseable netstat output: %r' % (err,))
+    raise SampleError('no link-level entry in netstat output')
+
+
+def read_counters(iface):
+    try:
+        proc = subprocess.run(
+            [NETSTAT, '--libxo', 'json', '-ibn', '-I', iface],
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        raise SampleError('netstat failed: %r' % (err,))
+    if proc.returncode != 0:
+        raise SampleError('netstat exited %d' % proc.returncode)
+    return parse_counters(proc.stdout.decode('utf-8', 'replace'))
+
+
+def open_state(path, flags):
+    """Open a state file 0600 and refuse to follow symlinks."""
+    return os.open(path, flags | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+
+
+def append_sample(spool, reading, ts, rx, tx):
+    """Append one sample. If nobody is consuming, rotate instead of growing."""
+    try:
+        if os.stat(spool).st_size > MAX_SPOOL_BYTES:
+            os.rename(spool, reading)   # drain() picks this up first
+    except FileNotFoundError:
+        pass
+    fd = open_state(spool, os.O_WRONLY | os.O_APPEND)
+    try:
+        os.write(fd, ('%d,%d,%d\n' % (ts, rx, tx)).encode())
+    finally:
+        os.close(fd)
+
+
+def parse_spool(path):
+    """Read samples from a spool file, skipping any damaged line."""
+    samples = []
+    with open(path, 'r') as handle:
+        for line in handle:
+            parts = line.strip().split(',')
+            if len(parts) != 3:
+                continue
+            try:
+                samples.append(tuple(int(p) for p in parts))
+            except ValueError:
+                continue
+    return samples
+
+
+def drain(spool, reading):
+    """Atomically take every queued sample.
+
+    The spool is renamed before it is read, so the collector's next append
+    lands in a fresh file and no sample is lost or handed out twice. A
+    leftover .read file from an interrupted run is returned first.
+    """
+    samples = []
+    if os.path.exists(reading):
+        samples.extend(parse_spool(reading))
+        os.unlink(reading)
+    try:
+        os.rename(spool, reading)
+    except FileNotFoundError:
+        return samples
+    samples.extend(parse_spool(reading))
+    os.unlink(reading)
+    return samples
+
+
+def collector_running(pidfile):
+    """True if some process holds the collector lock."""
+    fd = open_state(pidfile, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    finally:
+        os.close(fd)                # closing the fd drops the lock
+    return False
+
+
+def spawn_collector(script):
+    subprocess.Popen([sys.executable, script, 'acquire'],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, close_fds=True,
+                     start_new_session=True)
+
+
+def acquire(iface, spool, reading, pidfile):
+    """Collector loop: sample every SAMPLE_INTERVAL seconds, forever."""
+    lock_fd = open_state(pidfile, os.O_RDWR)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 0                    # another collector owns this interface
+    os.ftruncate(lock_fd, 0)
+    os.write(lock_fd, ('%d\n' % os.getpid()).encode())
+
+    failures = 0
+    next_run = time.time()
+    while True:
+        try:
+            rx, tx = read_counters(iface)
+            append_sample(spool, reading, int(time.time()), rx, tx)
+            failures = 0
+        except (SampleError, OSError) as err:
+            failures += 1
+            print('ipss_%s: %s' % (iface, err), file=sys.stderr)
+            if failures >= MAX_FAILURES:
+                return 1
+        # Schedule from the previous deadline so the interval does not drift.
+        next_run += SAMPLE_INTERVAL
+        delay = next_run - time.time()
+        if delay < 0:
+            next_run = time.time()
+            delay = 0
+        time.sleep(delay)
+
+
+def print_config(iface):
+    # The field names rbytes/obytes are historical and kept on purpose:
+    # munin names its RRD files after them, so renaming would orphan the
+    # existing history. They carry packet counts here.
+    print('graph_title 30Sec SuperSample on ' + iface + ' packets')
+    print('graph_order rbytes obytes')
+    print('graph_args --base 1000')
+    print('graph_vlabel packets per ${graph_period} in (-) / out (+)')
+    print('graph_category network')
+    print('graph_info This graph shows the pps of the ' + iface +
+          ' network interface.')
+    print('rbytes.label received')
+    print('rbytes.type DERIVE')
+    print('rbytes.graph no')
+    print('update_rate 30')
+    print('graph_data_size custom 1d, 30s for 1w, 1m for 1t, 5m for 1y')
+    print('rbytes.min 0')
+    print('obytes.label pps')
+    print('obytes.type DERIVE')
+    print('obytes.negative rbytes')
+    print('obytes.min 0')
+    print('obytes.draw AREA')
+    print('obytes.colour COLOUR4')
+
+
+def fetch(script, spool, reading, pidfile):
+    if not collector_running(pidfile):
+        spawn_collector(script)
+    for ts, rx, tx in drain(spool, reading):
+        print('rbytes.value %d:%d' % (ts, rx))
+        print('obytes.value %d:%d' % (ts, tx))
+
+
+def main(argv):
+    command = argv[1] if len(argv) > 1 else ''
+
+    if command == 'autoconf':
+        print('yes' if os.access(NETSTAT, os.X_OK) else 'no (netstat not found)')
+        return 0
+
+    iface = interface_from_name(argv[0])
+    if iface is None:
+        print('ipss_: plugin must be linked as ipss_<interface>',
+              file=sys.stderr)
+        return 1
+
+    if command == 'config':
+        print_config(iface)
+        return 0
+
+    spool, reading, pidfile = state_paths(iface)
+    if command == 'acquire':
+        return acquire(iface, spool, reading, pidfile)
+    try:
+        fetch(os.path.abspath(argv[0]), spool, reading, pidfile)
+    except OSError as err:
+        print('ipss_%s: %s' % (iface, err), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

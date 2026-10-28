@@ -11,7 +11,6 @@
 #       autoconf (optional - only used by munin-config)
 #
 # (C) Marki - count number of connections in each state
-#           - no LISTEN as we are running netstat without the "-a" option
 #
 #
 # Magic markers (optional - used by munin-config and some installation
@@ -19,22 +18,19 @@
 #%# family=auto
 #%# capabilities=autoconf
 
-
+STATES="ESTABLISHED SYN_SENT SYN_RCVD FIN_WAIT_1 FIN_WAIT_2 TIME_WAIT CLOSED CLOSE_WAIT LAST_ACK CLOSING LISTEN"
 
 if [ "$1" = "autoconf" ]; then
-        if ( netstat -nt 2>/dev/null >/dev/null ); then
+        if ! command -v netstat >/dev/null 2>&1; then
+                echo "no (netstat program not found)"
+                exit 1
+        fi
+        if netstat -an -p tcp -f inet >/dev/null 2>&1; then
                 echo yes
                 exit 0
-        else
-                if [ $? -eq 127 ]
-                then
-                        echo "no (netstat program not found)"
-                        exit 1
-                else
-                        echo no
-                        exit 1
-                fi
         fi
+        echo no
+        exit 1
 fi
 
 if [ "$1" = "config" ]; then
@@ -45,7 +41,7 @@ if [ "$1" = "config" ]; then
         echo 'graph_category network'
         echo 'graph_period second'
         echo 'graph_info This graph shows the TCP connections states of all the network interfaces combined.'
-        for i in ESTABLISHED SYN_SENT SYN_RECV FIN_WAIT1 FIN_WAIT2 TIME_WAIT CLOSE CLOSE_WAIT LAST_ACK CLOSING; do
+        for i in $STATES; do
           echo "$i.label $i"
           echo "$i.type GAUGE"
           echo "$i.max 32999"
@@ -54,39 +50,13 @@ if [ "$1" = "config" ]; then
         exit 0
 fi
 
-netstat -an -p tcp -f inet | awk '$NF ~ /[A-Z]/ {print $NF}'|awk '
-  BEGIN{
-    estab = "0";
-    syn_sent = "0";
-    listen = "0";
-    time_wait = "0";
-    closing = "0";
-    closed = "0";
-    last_ack = "0";
-    fin_wait_1 = "0";
-    fin_wait_2 = "0";
-    close_wait = "0";
+netstat -an -p tcp -f inet | awk -v states="$STATES" '
+  BEGIN {
+    n = split(states, order, " ")
+    for (i = 1; i <= n; i++) count[order[i]] = 0
   }
-  /ESTABLISH/           { estab=estab+1 }
-  /SYN_SENT/            { syn_sent=syn_sent+1 }
-  /LISTEN/              { listen=listen+1 }
-  /TIME_WAIT/           { time_wait=time_wait+1 }
-  /CLOSING/             { closing=closing+1 }
-  /CLOSED/              { closed=closed+1 }
-  /LAST_ACK/            { last_ack=last_ack+1 }
-  /FIN_WAIT_1/          { fin_wait_1=fin_wait_1+1 }
-  /FIN_WAIT_2/          { fin_wait_2=fin_wait_2+1 }
-  /CLOSE_WAIT/          { close_wait=close_wait+1 }
-END{
-   print "ESTABLISH.value " estab;
-   print "SYN_SENT.value " syn_sent;
-   print "LISTEN.value " listen;
-   print "TIME_WAIT.value " time_wait;
-   print "CLOSING.value " closing;
-   print "CLOSED.value " closed;
-   print "LAST_ACK.value " last_ack;
-   print "FIN_WAIT_1.value " fin_wait_1;
-   print "FIN_WAIT_2.value " fin_wait_2;
-   print "CLOSE_WAIT.value " close_wait;
-}
+  $NF in count { count[$NF]++ }
+  END {
+    for (i = 1; i <= n; i++) print order[i] ".value " count[order[i]]
+  }
 '
