@@ -1,5 +1,6 @@
-#!/usr/bin/env python3.7
+#!/usr/bin/env python3
 # Mark Saad
+# 27Oct26
 # Graph for wttr.in data based on airport code 
 
 import os

@@ -14,7 +14,7 @@ All plugins live in [`FreeBSD/`](FreeBSD/). Plugins whose name ends in `_` are w
 | [`nginx_connections`](FreeBSD/nginx_connections) | sh | nginx | none |
 | [`nginx_requests`](FreeBSD/nginx_requests) | sh | nginx | none |
 | [`tcp-states`](FreeBSD/tcp-states) | sh | network | none |
-| [`weather_`](FreeBSD/weather_) | python3.7 | sensors | airport code / location |
+| [`weather_`](FreeBSD/weather_) | python3 | sensors | airport code / location |
 
 ## arp_
 Graphs the number of entries in the ARP table for one interface.
@@ -100,4 +100,3 @@ Graphs current weather for a location using data from [wttr.in](https://wttr.in)
 - The location comes from the plugin name suffix (for example `weather_KBOS`) or from the `code` environment variable.
 - Fetches `http://wttr.in/<code>?format=j1` and reports the current temperature (F), "feels like" temperature (F), and humidity.
 - Requires outbound HTTP access from the munin node.
-- Note that the shebang is `python3.7`; adjust it if that interpreter is not installed.
