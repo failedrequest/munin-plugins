@@ -1,0 +1,41 @@
+#!/bin/sh
+#
+# minimunin/munin plugin: KTLS records encrypted/decrypted per second by TLS
+# version and cipher (software/OCF path).
+# Source: sysctl kern.ipc.tls.stats.ocf.*  (counters -> DERIVE)
+#
+#%# family=auto
+#%# capabilities=autoconf
+
+FIELDS="tls13_gcm_encrypts tls12_gcm_encrypts tls13_chacha20_encrypts tls12_chacha20_encrypts tls11_cbc_encrypts tls10_cbc_encrypts tls13_gcm_decrypts tls12_gcm_decrypts tls13_chacha20_decrypts tls12_chacha20_decrypts tls11_cbc_decrypts"
+
+if [ "$1" = "autoconf" ]; then
+    if /sbin/sysctl -n kern.ipc.tls.stats.ocf.tls13_gcm_encrypts >/dev/null 2>&1; then
+        echo yes
+        exit 0
+    fi
+    echo "no (kern.ipc.tls.stats.ocf not available)"
+    exit 1
+fi
+
+if [ "$1" = "config" ]; then
+    echo 'graph_title KTLS records per second'
+    echo 'graph_args --base 1000 -l 0'
+    echo 'graph_vlabel records / second'
+    echo 'graph_category nginx'
+    echo 'graph_info TLS records processed by the kernel (OCF) per second, by TLS version and cipher.'
+    for f in $FIELDS; do
+        echo "${f}.label ${f}"
+        echo "${f}.type DERIVE"
+        echo "${f}.min 0"
+        case "$f" in
+            *_encrypts) echo "${f}.draw AREASTACK" ;;
+        esac
+    done
+    exit 0
+fi
+
+for f in $FIELDS; do
+    v=$(/sbin/sysctl -n "kern.ipc.tls.stats.ocf.$f" 2>/dev/null)
+    echo "${f}.value ${v:-U}"
+done

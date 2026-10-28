@@ -8,6 +8,11 @@ All plugins live in [`FreeBSD/`](FreeBSD/). Plugins whose name ends in `_` are w
 | [`arp_`](FreeBSD/arp_) | sh | network | interface name |
 | [`ifss_`](FreeBSD/ifss_) | python3 | network | interface name |
 | [`ipss_`](FreeBSD/ipss_) | python3 | network | interface name |
+| [`ktls_new_sessions`](FreeBSD/ktls_new_sessions) | sh | nginx | none |
+| [`ktls_records`](FreeBSD/ktls_records) | sh | nginx | none |
+| [`ktls_sessions`](FreeBSD/ktls_sessions) | sh | nginx | none |
+| [`nginx_connections`](FreeBSD/nginx_connections) | sh | nginx | none |
+| [`nginx_requests`](FreeBSD/nginx_requests) | sh | nginx | none |
 | [`tcp-states`](FreeBSD/tcp-states) | sh | network | none |
 | [`weather_`](FreeBSD/weather_) | python3.7 | sensors | airport code / location |
 
@@ -40,6 +45,47 @@ Graphs the number of entries in the ARP table for one interface.
 - Samples the input and output packet counters from `netstat --libxo json -ibn -I <interface>` every 30 seconds.
 - Graph shows received packets (-) and sent packets (+). No bytes-to-bits conversion is applied.
 - Upgrading from the old version: delete the leftover `/tmp/<interface>-pps-stats.db` and stop any old `ipss_<if> acquire` process or rc entry.
+
+## ktls_new_sessions
+Graphs how often the kernel creates new KTLS (kernel TLS) sessions, plus its error counters. One session is created per TLS connection handed to the kernel, so this is the KTLS connection rate.
+
+- Reads `kern.ipc.tls.stats.*` with `sysctl -n`. All seven fields are `DERIVE` counters with `min 0`, so they are graphed per second.
+- Fields: `enable_calls` (attempts, drawn as an area), `offload_total` (successful), `failed_crypto`, `switch_failed`, `switch_to_sw`, `switch_to_ifnet`, `corrupted_records`.
+- A counter that cannot be read is reported as `U` (unknown).
+- `autoconf` succeeds when `kern.ipc.tls.stats.enable_calls` exists.
+- Example: `ln -s /path/to/ktls_new_sessions /usr/local/etc/minimunin-plugins/ktls_new_sessions`
+
+## ktls_records
+Graphs TLS records the kernel encrypts and decrypts per second, by TLS version and cipher (the software/OCF path).
+
+- Reads `kern.ipc.tls.stats.ocf.*` with `sysctl -n`. All fields are `DERIVE` counters with `min 0`.
+- Eleven fields: encrypts for `tls13_gcm`, `tls12_gcm`, `tls13_chacha20`, `tls12_chacha20`, `tls11_cbc` and `tls10_cbc`, and decrypts for `tls13_gcm`, `tls12_gcm`, `tls13_chacha20`, `tls12_chacha20` and `tls11_cbc`. The encrypt fields are stacked.
+- A counter that cannot be read is reported as `U`.
+- `autoconf` succeeds when `kern.ipc.tls.stats.ocf.tls13_gcm_encrypts` exists.
+
+## ktls_sessions
+Graphs the number of active KTLS sessions, by mode and cipher.
+
+- Reads `kern.ipc.tls.{sw,ifnet,toe}.{gcm,chacha20,cbc}` with `sysctl -n`. These are `GAUGE`s. The three `sw.*` fields are stacked.
+- Field names use `_` instead of `.` (for example `sw_gcm`), because munin field names cannot contain a dot.
+- Adds a `total` line from `kern.ipc.tls.stats.active`.
+- A value that cannot be read is reported as `U`.
+- `autoconf` succeeds when `kern.ipc.tls.enable` exists.
+
+## nginx_connections
+Graphs nginx connections by state, from nginx's `stub_status` page.
+
+- Fetches the status page with `/usr/bin/fetch -q -T 5` (5 second timeout). The default URL is `http://127.0.0.1:8080/nginx_status`; set `NGINX_STATUS_URL` to use another.
+- Needs a `stub_status` location in nginx that serves that URL.
+- Four `GAUGE`s: `active`, `reading`, `writing`, `waiting`.
+- `autoconf` succeeds when the page can be read and starts with `Active connections`.
+
+## nginx_requests
+Graphs nginx requests and connections per second, from the same `stub_status` page.
+
+- Same URL, `NGINX_STATUS_URL` override and `fetch` call as `nginx_connections`.
+- Three `DERIVE` counters with `min 0`: `requests` (drawn as an area), `accepts` (accepted connections) and `handled` (handled connections). The values come from the third line of the page.
+- `autoconf` succeeds when the page can be read and starts with `Active connections`.
 
 ## tcp-states
 Graphs the number of TCP connections in each state across all interfaces.

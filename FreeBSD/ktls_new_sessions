@@ -1,0 +1,40 @@
+#!/bin/sh
+#
+# minimunin/munin plugin: new KTLS sessions per second, plus failures and
+# mode switches. One new session is created per TLS connection handed to the
+# kernel, so this is the KTLS connection rate.
+# Source: sysctl kern.ipc.tls.stats.*  (counters -> DERIVE)
+#
+#%# family=auto
+#%# capabilities=autoconf
+
+FIELDS="enable_calls offload_total failed_crypto switch_failed switch_to_sw switch_to_ifnet corrupted_records"
+
+if [ "$1" = "autoconf" ]; then
+    if /sbin/sysctl -n kern.ipc.tls.stats.enable_calls >/dev/null 2>&1; then
+        echo yes
+        exit 0
+    fi
+    echo "no (kern.ipc.tls.stats not available)"
+    exit 1
+fi
+
+if [ "$1" = "config" ]; then
+    echo 'graph_title KTLS new sessions per second'
+    echo 'graph_args --base 1000 -l 0'
+    echo 'graph_vlabel per second'
+    echo 'graph_category nginx'
+    echo 'graph_info New kernel TLS sessions per second (enable_calls = attempts, offload_total = successful) and error counters.'
+    for f in $FIELDS; do
+        echo "${f}.label ${f}"
+        echo "${f}.type DERIVE"
+        echo "${f}.min 0"
+    done
+    echo 'enable_calls.draw AREA'
+    exit 0
+fi
+
+for f in $FIELDS; do
+    v=$(/sbin/sysctl -n "kern.ipc.tls.stats.$f" 2>/dev/null)
+    echo "${f}.value ${v:-U}"
+done

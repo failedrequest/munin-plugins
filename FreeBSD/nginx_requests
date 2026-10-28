@@ -1,0 +1,49 @@
+#!/bin/sh
+#
+# minimunin/munin plugin: nginx requests per second (from stub_status).
+# Needs the 127.0.0.1:8080/nginx_status location from nginx.conf.
+#
+#%# family=auto
+#%# capabilities=autoconf
+
+URL="${NGINX_STATUS_URL:-http://127.0.0.1:8080/nginx_status}"
+
+status() {
+    /usr/bin/fetch -q -T 5 -o - "$URL" 2>/dev/null
+}
+
+if [ "$1" = "autoconf" ]; then
+    if status | grep -q '^Active connections'; then
+        echo yes
+        exit 0
+    fi
+    echo "no (cannot read ${URL})"
+    exit 1
+fi
+
+if [ "$1" = "config" ]; then
+    echo 'graph_title nginx requests per second'
+    echo 'graph_args --base 1000 -l 0'
+    echo 'graph_vlabel requests / second'
+    echo 'graph_category nginx'
+    echo 'graph_info Requests, accepted and handled connections per second, from nginx stub_status.'
+    echo 'requests.label requests'
+    echo 'requests.type DERIVE'
+    echo 'requests.min 0'
+    echo 'requests.draw AREA'
+    echo 'accepts.label accepted connections'
+    echo 'accepts.type DERIVE'
+    echo 'accepts.min 0'
+    echo 'handled.label handled connections'
+    echo 'handled.type DERIVE'
+    echo 'handled.min 0'
+    exit 0
+fi
+
+# Third line of stub_status: " <accepts> <handled> <requests>"
+status | awk '
+    NR == 3 {
+        print "accepts.value "  $1
+        print "handled.value "  $2
+        print "requests.value " $3
+    }'

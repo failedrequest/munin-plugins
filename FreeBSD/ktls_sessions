@@ -1,0 +1,48 @@
+#!/bin/sh
+#
+# minimunin/munin plugin: active kernel TLS (KTLS) sessions by mode and cipher.
+# Source: sysctl kern.ipc.tls.{sw,ifnet,toe}.*  (gauges)
+#
+#%# family=auto
+#%# capabilities=autoconf
+
+FIELDS="sw.gcm sw.chacha20 sw.cbc ifnet.gcm ifnet.chacha20 ifnet.cbc toe.gcm toe.chacha20 toe.cbc"
+
+if [ "$1" = "autoconf" ]; then
+    if /sbin/sysctl -n kern.ipc.tls.enable >/dev/null 2>&1; then
+        echo yes
+        exit 0
+    fi
+    echo "no (kern.ipc.tls not available)"
+    exit 1
+fi
+
+if [ "$1" = "config" ]; then
+    echo 'graph_title KTLS active sessions'
+    echo 'graph_args --base 1000 -l 0'
+    echo 'graph_vlabel sessions'
+    echo 'graph_category nginx'
+    echo 'graph_info Active kernel TLS sessions by mode (sw/ifnet/toe) and cipher.'
+    for f in $FIELDS; do
+        n=$(echo "$f" | tr . _)
+        echo "${n}.label ${f}"
+        echo "${n}.type GAUGE"
+        echo "${n}.min 0"
+        case "$f" in
+            sw.*) echo "${n}.draw AREASTACK" ;;
+        esac
+    done
+    echo 'total.label total (kern.ipc.tls.stats.active)'
+    echo 'total.type GAUGE'
+    echo 'total.min 0'
+    echo 'total.draw LINE1'
+    exit 0
+fi
+
+for f in $FIELDS; do
+    n=$(echo "$f" | tr . _)
+    v=$(/sbin/sysctl -n "kern.ipc.tls.$f" 2>/dev/null)
+    echo "${n}.value ${v:-U}"
+done
+v=$(/sbin/sysctl -n kern.ipc.tls.stats.active 2>/dev/null)
+echo "total.value ${v:-U}"
