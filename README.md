@@ -55,8 +55,3 @@ Graphs current weather for a location using data from [wttr.in](https://wttr.in)
 - Fetches `http://wttr.in/<code>?format=j1` and reports the current temperature (F), "feels like" temperature (F), and humidity.
 - Requires outbound HTTP access from the munin node.
 - Note that the shebang is `python3.7`; adjust it if that interpreter is not installed.
-
-## Testing and debugging
-
-- `python3 -m unittest discover -s tests` runs the unit tests (for `ifss_` and `ipss_`).
-- `tools/plugin-run <plugin> [instance] [command]` runs a plugin the way munin would, using a throw-away state directory, and checks the output format. Examples: `tools/plugin-run tcp-states`, `tools/plugin-run ifss_ em0 config`.
